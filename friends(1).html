@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>友谊提名算法 - 不依赖距离版</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      text-align: center;
+    }
+    .main-controls {
+      margin-bottom: 15px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+    .main-controls label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-size: 16px;
+    }
+    .main-controls input {
+      width: 80px;
+      padding: 5px;
+      font-size: 16px;
+      margin-top: 5px;
+    }
+    .canvas-container {
+      display: inline-block;
+      vertical-align: top;
+      margin: 10px;
+      max-width: 100%;
+    }
+    .flex-row {
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      align-items: flex-start;
+      margin-top: 20px;
+      gap: 40px;
+      flex-wrap: wrap;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      background-color: #f9f9f9;
+      display: block;
+      margin: 0 auto;
+      width: 100%;
+      height: auto;
+      max-width: 600px; /* 主画布最大宽度 */
+    }
+    .legend {
+      display: inline-block;
+      border: 1px solid #ccc;
+      padding: 8px;
+      border-radius: 6px;
+      margin: 10px;
+      text-align: left;
+      max-width: 90%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .legend-item {
+      margin: 6px 0;
+      display: flex;
+      align-items: center;
+    }
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      margin-right: 6px;
+      border: 1px solid #999;
+    }
+    #results {
+      margin: 10px;
+    }
+    .round-info {
+      font-weight: bold;
+      margin: 10px 0;
+      font-size: 16px;
+      color: #333;
+    }
+    .sub-title {
+      margin-top: 0;
+      margin-bottom: 5px;
+      font-size: 18px;
+    }
+    button {
+      cursor: pointer;
+      font-size: 14px;
+      padding: 8px 12px;
+      margin: 5px;
+      border: none;
+      border-radius: 4px;
+      background-color: #007BFF;
+      color: white;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    /* 响应式调整 */
+    @media (max-width: 768px) {
+      .flex-row {
+        flex-direction: column;
+        align-items: center;
+      }
+      .canvas-container {
+        margin: 10px 0;
+        width: 90%;
+      }
+      canvas {
+        max-width: 90%; /* 在移动设备上适当缩小画布 */
+      }
+      .legend {
+        width: 90%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<h1>友谊提名算法 & 随机组 对照演示</h1>
+
+<!-- 1. 控制区 -->
+<div class="main-controls">
+  <label>总人数(≤160):
+    <input id="totalNodes" type="number" value="30" min="10" max="160">
+  </label>
+  <label>总种子数(x):
+    <input id="seedNodes" type="number" value="6" min="2">
+  </label>
+  <button id="generateBtn">生成网络</button>
+</div>
+
+<p>最多可选节点数 = <span id="selectCount"></span>；选中的节点(红)和根据不同方法选出的初始节点（绿）共同构成初始传播节点。</p>
+
+<!-- 主画布 -->
+<div class="canvas-container">
+  <canvas id="mainCanvas"></canvas><br>
+  <button id="confirmBtn" style="display:none;">确认选择</button>
+</div>
+
+<!-- 下方两张画布 + 轮次数信息 -->
+<div class="flex-row">
+  <div class="canvas-container">
+    <h3 class="sub-title">友谊提名组</h3>
+    <div id="roundInfoFriend" class="round-info"></div>
+    <canvas id="canvasFriend"></canvas>
+  </div>
+  <div class="canvas-container">
+    <h3 class="sub-title">随机组</h3>
+    <div id="roundInfoRandom" class="round-info"></div>
+    <canvas id="canvasRandom"></canvas>
+  </div>
+</div>
+
+<!-- 图例与结果 -->
+<div>
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #add8e6;"></div>
+      <span>Normal</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #90ee90;"></div>
+      <span>Seed</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ffcc00;"></div>
+      <span>Spread</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-color" style="background-color: #ff6347;"></div>
+      <span>Selected</span>
+    </div>
+    <div class="legend-item" style="margin-top:10px; font-weight:bold;">
+      传播概率: 5%，与论文数据对齐
+    </div>
+  </div>
+  <div id="results"></div>
+</div>
+
+<script>
+/* ============ 参数设置 ============ */
+const spreadProbability     = 0.05;    // 传播概率(5%)
+const maxBaseProb           = 0.05;    // 节点数小于等于50时的连边基准概率
+const midBaseProb           = 0.02;    // 节点数介于50-100时的连边基准概率
+const minBaseProb           = 0.01;    // 节点数>100时的连边基准概率
+
+const animSteps             = 75;      // 动画步数
+const totalRounds           = 5;       // 固定5轮
+const nominationFlashDelay  = 200;     // 提名闪烁间隔 (毫秒)
+const roundIntervalDelay    = 600;     // 每轮间隔 (毫秒)
+const nominationWaitTime    = 2000;    // 提名动画结束到传播的等待时间 (毫秒)
+
+let totalN = 30;
+let seedN  = 6;
+let halfSeed = 3;
+
+let nodes = [];
+let links = [];
+let selectedNodes = [];
+
+const mainCanvas = document.getElementById('mainCanvas');
+const ctxMain    = mainCanvas.getContext('2d');
+const canvasFriend = document.getElementById('canvasFriend');
+const ctxFriend    = canvasFriend.getContext('2d');
+const canvasRandom = document.getElementById('canvasRandom');
+const ctxRandom    = canvasRandom.getContext('2d');
+
+const generateBtn = document.getElementById('generateBtn');
+const confirmBtn  = document.getElementById('confirmBtn');
+const selectCountSpan = document.getElementById('selectCount');
+const resultsDiv  = document.getElementById('results');
+const roundInfoFriend = document.getElementById('roundInfoFriend');
+const roundInfoRandom = document.getElementById('roundInfoRandom');
+
+// 颜色定义
+const colors = {
+  normal:   '#add8e6',
+  seed:     '#90ee90',
+  spread:   '#ffcc00',
+  selected: '#ff6347',
+};
+
+// 动画管理
+let timersAndFrames = [];
+function cancelAllAnimations() {
+  timersAndFrames.forEach(item => {
+    if(item.type === 'timeout') clearTimeout(item.id);
+    if(item.type === 'frame')   cancelAnimationFrame(item.id);
+  });
+  timersAndFrames = [];
+}
+function setMyTimeout(fn, delay){
+  const tid = setTimeout(fn, delay);
+  timersAndFrames.push({type:'timeout', id:tid});
+  return tid;
+}
+function setMyFrame(fn){
+  const fid = requestAnimationFrame(fn);
+  timersAndFrames.push({type:'frame', id:fid});
+  return fid;
+}
+
+/* ============ 动态设置画布大小 ============ */
+let friendNodes = null;
+let randomNodes = null;
+
+// 定义全局节点半径
+let nodeRadius = 10;
+
+function setCanvasSizes() {
+  // 获取当前屏幕宽度
+  const screenWidth = window.innerWidth;
+
+  // 定义比例因子，根据屏幕宽度调整画布大小
+  let mainCanvasSize, subCanvasSize;
+
+  if(screenWidth <= 480){ // 小屏幕，如手机
+    mainCanvasSize = Math.min(screenWidth - 40, 300);
+    subCanvasSize = Math.min(screenWidth - 40, 300); // 主画布和子画布等大
+    nodeRadius = 12; // 增大节点半径
+  } else { // 中大屏幕，如平板和桌面
+    mainCanvasSize = 600;
+    subCanvasSize = 600; // 主画布和子画布等大
+    nodeRadius = 8;
+  }
+
+  // 设置主画布大小
+  mainCanvas.width = mainCanvasSize;
+  mainCanvas.height = mainCanvasSize;
+
+  // 设置子画布大小
+  canvasFriend.width = subCanvasSize;
+  canvasFriend.height = subCanvasSize;
+  canvasRandom.width = subCanvasSize;
+  canvasRandom.height = subCanvasSize;
+
+  // 重绘画布
+  drawMainNetwork();
+  if (friendNodes) drawGroupNetwork(ctxFriend, friendNodes);
+  if (randomNodes) drawGroupNetwork(ctxRandom, randomNodes);
+}
+
+// 调整画布尺寸并在窗口大小变化时调用
+window.addEventListener('load', setCanvasSizes);
+window.addEventListener('resize', setCanvasSizes);
+
+/* ============ 生成网络按钮 ============ */
+generateBtn.addEventListener('click', ()=>{
+  cancelAllAnimations();
+
+  totalN = parseInt(document.getElementById('totalNodes').value, 10);
+  seedN  = parseInt(document.getElementById('seedNodes').value, 10);
+
+  if(totalN > 160){
+    alert('总人数不能超过160');
+    return;
+  }
+  if(seedN >= totalN){
+    alert('种子数应小于总人数');
+    return;
+  }
+  // 用户最多可选多少
+  halfSeed = Math.floor(seedN / 2);
+
+  selectedNodes = [];
+  confirmBtn.style.display = 'none';
+  resultsDiv.innerHTML = '';
+  roundInfoFriend.textContent = '';
+  roundInfoRandom.textContent = '';
+
+  selectCountSpan.textContent = halfSeed;
+
+  createNetwork(totalN);
+  drawMainNetwork();
+});
+
+/* ============ 主画布点击(选中/取消) ============ */
+mainCanvas.addEventListener('click', handleCanvasInteraction);
+mainCanvas.addEventListener('touchstart', handleCanvasInteraction);
+
+function handleCanvasInteraction(e){
+  if(!nodes.length) return;
+
+  e.preventDefault(); // 防止页面滚动
+
+  let clickX, clickY;
+  if(e.type === 'touchstart'){
+    const touch = e.touches[0];
+    const rect = mainCanvas.getBoundingClientRect();
+    clickX = touch.clientX - rect.left;
+    clickY = touch.clientY - rect.top;
+  } else {
+    const rect = mainCanvas.getBoundingClientRect();
+    clickX = e.clientX - rect.left;
+    clickY = e.clientY - rect.top;
+  }
+
+  // 根据画布大小计算缩放比例
+  const scaleX = mainCanvas.width / 600;
+  const scaleY = mainCanvas.height / 600;
+
+  nodes.forEach(nd=>{
+    const dist = Math.sqrt(((nd.x * scaleX) - clickX)**2 + ((nd.y * scaleY) - clickY)**2);
+    if(dist < nodeRadius + 4){ // 增加可点击范围
+      // 若已选 => 取消； 否则 选中(<= halfSeed)
+      if(selectedNodes.includes(nd)){
+        nd.state = 'normal';
+        selectedNodes = selectedNodes.filter(x => x !== nd);
+      } else {
+        if(selectedNodes.length < halfSeed){
+          nd.state = 'selected';
+          selectedNodes.push(nd);
+        } else {
+          alert(`最多可选 ${halfSeed} 个节点`);
+        }
+      }
+      drawMainNetwork();
+      confirmBtn.style.display = (selectedNodes.length > 0) ? 'inline-block' : 'none';
+    }
+  });
+}
+
+/* ============ 确认按钮 ============ */
+confirmBtn.addEventListener('click', ()=>{
+  cancelAllAnimations();
+  if(!selectedNodes.length){
+    alert('至少选一个节点');
+    return;
+  }
+  initializeGroupsWithAnimation();
+});
+
+/*
+   ============ 创建网络(不看距离) ============
+   1) 根据节点总数确定一个 baseProb (分段逻辑)
+   2) 两两节点用 baseProb 判断是否连线
+   3) 确保每个节点至少有一条边
+*/
+function createNetwork(num){
+  nodes = [];
+  links = [];
+  for(let i=0; i<num; i++){
+    nodes.push({
+      id: i,
+      x: Math.random() * 600,
+      y: Math.random() * 600,
+      state: 'normal',
+    });
+  }
+
+  const baseProb = getBaseProbability(num);
+
+  for(let i=0; i<num; i++){
+    for(let j=i+1; j<num; j++){
+      if(Math.random() < baseProb){
+        links.push({source: i, target: j});
+      }
+    }
+  }
+
+  ensureAtLeastOneEdge();
+}
+
+/* ============ 根据节点数分段返回连边概率 ============ */
+function getBaseProbability(n){
+  if(n <= 50) return 0.3;   // 节点少 => 较多连线
+  else if(n <= 100) return 0.2;
+  else return 0.1;         // 节点多 => 减少连线
+}
+
+/* ============ 确保每个节点至少有一条边 ============ */
+function ensureAtLeastOneEdge(){
+  for(let i=0; i<nodes.length; i++){
+    if(countDegree(i) === 0){
+      let j = i;
+      while(j === i){
+        j = Math.floor(Math.random() * nodes.length);
+      }
+      links.push({source: i, target: j});
+    }
+  }
+}
+function countDegree(id){
+  let d = 0;
+  links.forEach(l=>{
+    if(l.source === id || l.target === id) d++;
+  });
+  return d;
+}
+
+/* ============ 主画布绘制 ============ */
+function drawMainNetwork(){
+  if (mainCanvas.width === 0 || mainCanvas.height === 0) return;
+  ctxMain.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+  ctxMain.strokeStyle = '#ccc';
+  links.forEach(l=>{
+    const s = nodes[l.source];
+    const t = nodes[l.target];
+    ctxMain.beginPath();
+    ctxMain.moveTo(s.x * (mainCanvas.width / 600), s.y * (mainCanvas.height / 600));
+    ctxMain.lineTo(t.x * (mainCanvas.width / 600), t.y * (mainCanvas.height / 600));
+    ctxMain.stroke();
+  });
+  nodes.forEach(n=>{
+    ctxMain.fillStyle = colors[n.state] || colors.normal;
+    ctxMain.beginPath();
+    ctxMain.arc(n.x * (mainCanvas.width / 600), n.y * (mainCanvas.height / 600), nodeRadius, 0, 2*Math.PI);
+    ctxMain.fill();
+    ctxMain.stroke();
+  });
+}
+
+/*
+   ============ 初始化 Friend & Random 组 + 提名动画 ============
+   修复要点：
+   1) Friend 组: selected + seed = seedN
+   2) Random 组: 同样保留 selected，补齐 seedN
+*/
+function initializeGroupsWithAnimation(){
+  // 1) Friend 组：复制主网络节点，标记 selected
+  friendNodes = JSON.parse(JSON.stringify(nodes));
+  selectedNodes.forEach(u=>{
+    friendNodes[u.id].state = 'selected';
+  });
+
+  // 为每个 selected 提名一个邻居 => seed
+  friendNodes.forEach(fn=>{
+    if(fn.state === 'selected'){
+      const nb = getNeighbors(fn.id);
+      // 只提名一个 normal 为 seed
+      for(let nbid of nb){
+        if(friendNodes[nbid].state === 'normal'){
+          friendNodes[nbid].state = 'seed';
+          doNominationAnimation(ctxFriend, friendNodes, fn.id, nbid, 6);
+          break;
+        }
+      }
+    }
+  });
+
+  // 补齐 friendNodes 到 seedN
+  ensureFriendSeeds(friendNodes);
+
+  // 2) Random 组：复制主网络节点 => 全设 normal => 同步 selected => 补 seeds
+  randomNodes = JSON.parse(JSON.stringify(nodes));
+  randomNodes.forEach(r => {
+    r.state = 'normal'; // 重置
+  });
+  // 恢复用户选中的 => selected
+  selectedNodes.forEach(u => {
+    randomNodes[u.id].state = 'selected';
+  });
+  // 补齐 randomNodes 到 seedN
+  ensureRandomSeeds(randomNodes);
+
+  // 绘制
+  drawGroupNetwork(ctxFriend, friendNodes);
+  drawGroupNetwork(ctxRandom, randomNodes);
+
+  // 提名动画结束后开始传播
+  setMyTimeout(()=>{
+    startSpreading(friendNodes, randomNodes);
+  }, nominationWaitTime);
+
+  function getNeighbors(id){
+    return links
+      .filter(l => (l.source === id || l.target === id))
+      .map(l => (l.source === id ? l.target : l.source));
+  }
+}
+
+/* ============ Friend 组 - 补齐 (selected + seed = seedN) ============ */
+function ensureFriendSeeds(friendNodes){
+  let totalSelSeed = friendNodes.filter(n=>
+    (n.state === 'selected' || n.state === 'seed')
+  ).length;
+
+  if(totalSelSeed === seedN) return;
+  if(totalSelSeed > seedN){
+    // 如果用户选太多 => 目前做简单处理: 把多余 selected 变 normal
+    // (或你可以提示用户重新选择)
+    const over = totalSelSeed - seedN;
+    let count = 0;
+    for(let n of friendNodes){
+      if(n.state === 'selected'){
+        n.state = 'normal';
+        count++;
+        if(count >= over) break;
+      }
+    }
+    return;
+  }
+
+  // totalSelSeed < seedN => 补
+  const short = seedN - totalSelSeed;
+  for(let i=0; i<short; i++){
+    let foundOne = false;
+    const selectedList = friendNodes.filter(n=>n.state === 'selected');
+    for(let sNode of selectedList){
+      const nb = links
+        .filter(l=> (l.source === sNode.id || l.target === sNode.id))
+        .map(l=> (l.source === sNode.id ? l.target : l.source));
+      let localFound = false;
+      for(let nbid of nb){
+        if(friendNodes[nbid].state === 'normal'){
+          friendNodes[nbid].state = 'seed';
+          doNominationAnimation(ctxFriend, friendNodes, sNode.id, nbid, 4);
+          foundOne = true;
+          localFound = true;
+          break;
+        }
+      }
+      if(localFound) break;
+    }
+    if(!foundOne){
+      // 若所有selected邻居都非 normal => 全局找 normal
+      const normalList = friendNodes.filter(n=>n.state === 'normal');
+      if(normalList.length){
+        normalList[0].state = 'seed';
+      } else {
+        // 实在没办法 => 把 selected 直接改 seed
+        const someSel = friendNodes.find(n=>n.state === 'selected');
+        if(someSel) someSel.state = 'seed';
+      }
+    }
+  }
+}
+
+/* ============ Random 组 - 同步 selected 并补齐 (selected + seed = seedN) ============ */
+function ensureRandomSeeds(randomNodes){
+  const sCount = randomNodes.filter(n=>n.state==='selected').length;
+  if(sCount === seedN) return;
+  if(sCount > seedN){
+    alert(`注意: 选中节点数(${sCount})已超出总种子数(${seedN})，将自动降级部分selected为normal。`);
+    let over = sCount - seedN;
+    for(let rn of randomNodes){
+      if(over <=0) break;
+      if(rn.state === 'selected'){
+        rn.state = 'normal';
+        over--;
+      }
+    }
+    return;
+  }
+  // sCount < seedN => 需要再随机补
+  const needed = seedN - sCount;
+  const normalList = randomNodes
+    .filter(n=>n.state === 'normal')
+    .map(n=>n.id);
+  shuffleArray(normalList);
+
+  for(let i=0; i<needed; i++){
+    if(i < normalList.length){
+      randomNodes[normalList[i]].state = 'seed';
+    }
+  }
+}
+
+/* ============ 提名动画(闪烁) ============ */
+function doNominationAnimation(ctx, friendNodes, fromId, toId, maxFlashes=4){
+  const scale = ctx.canvas.width / 600;
+  let flashCount = 0;
+
+  function flashLine(){
+    if(flashCount > maxFlashes) return;
+    drawGroupNetwork(ctx, friendNodes);
+
+    const fromN = friendNodes[fromId];
+    const toN   = friendNodes[toId];
+
+    ctx.strokeStyle = (flashCount % 2 === 0) ? '#ff0000' : '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(fromN.x * scale, fromN.y * scale);
+    ctx.lineTo(toN.x * scale, toN.y * scale);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    flashCount++;
+    setMyTimeout(flashLine, nominationFlashDelay);
+  }
+  flashLine();
+}
+
+/* ============ 开始传播(共5轮) ============ */
+function startSpreading(friendNodes, randomNodes){
+  let round = 1;
+  function runRound(){
+    if(round > totalRounds){
+      // 结束
+      const fSpreadCount = friendNodes.filter(n=>n.state === 'spread').length;
+      const rSpreadCount = randomNodes.filter(n=>n.state === 'spread').length;
+      resultsDiv.innerHTML = `
+        <h3>传播完成</h3>
+        <p>友谊提名组: 最终传播数 = ${fSpreadCount}</p>
+        <p>随机组: 最终传播数 = ${rSpreadCount}</p>
+      `;
+      return;
+    }
+    roundInfoFriend.textContent = `第 ${round} 轮 / ${totalRounds}`;
+    roundInfoRandom.textContent = `第 ${round} 轮 / ${totalRounds}`;
+
+    // Friend => Random => Delay => Next
+    spread(ctxFriend, friendNodes, ()=>{
+      spread(ctxRandom, randomNodes, ()=>{
+        round++;
+        setMyTimeout(runRound, roundIntervalDelay);
+      });
+    });
+  }
+  runRound();
+}
+
+/* ============ 绘制子画布 ============ */
+function drawGroupNetwork(ctx, groupNodes){
+  if (ctx.canvas.width === 0 || ctx.canvas.height === 0) return;
+  ctx.clearRect(0,0,ctx.canvas.width, ctx.canvas.height);
+  const scale = ctx.canvas.width / 600;
+  ctx.strokeStyle = '#ccc';
+  links.forEach(l=>{
+    const s = groupNodes[l.source];
+    const t = groupNodes[l.target];
+    if(!s || !t) return;
+    ctx.beginPath();
+    ctx.moveTo(s.x * scale, s.y * scale);
+    ctx.lineTo(t.x * scale, t.y * scale);
+    ctx.stroke();
+  });
+  groupNodes.forEach(n=>{
+    ctx.fillStyle = colors[n.state] || colors.normal;
+    ctx.beginPath();
+    ctx.arc(n.x * scale, n.y * scale, nodeRadius * 0.75, 0, 2*Math.PI); // 缩小半径以适应子画布
+    ctx.fill();
+    ctx.stroke();
+  });
+}
+
+/* ============ 传播逻辑 + 动画 ============ */
+function spread(ctx, groupNodes, callback){
+  // selected/seed/spread 都可继续传播
+  const activeNodes = groupNodes.filter(n=>
+    (n.state === 'selected' || n.state === 'seed' || n.state === 'spread')
+  );
+  if(!activeNodes.length){
+    drawGroupNetwork(ctx, groupNodes);
+    callback();
+    return;
+  }
+  const newSpreads = [];
+  activeNodes.forEach(an=>{
+    const nb = links.filter(l=>(l.source === an.id || l.target === an.id))
+      .map(l=>(l.source === an.id ? l.target : l.source));
+    nb.forEach(nbid=>{
+      if(groupNodes[nbid].state === 'normal'){
+        if(Math.random() < spreadProbability){
+          groupNodes[nbid].state = 'spread';
+          newSpreads.push({from: an.id, to: nbid});
+        }
+      }
+    });
+  });
+
+  if(!newSpreads.length){
+    drawGroupNetwork(ctx, groupNodes);
+    callback();
+    return;
+  }
+
+  const scale = ctx.canvas.width / 600;
+  let finishCount = 0;
+  newSpreads.forEach(sp=>{
+    const fNode = groupNodes[sp.from];
+    const tNode = groupNodes[sp.to];
+    animateLine(ctx,
+      {x: fNode.x * scale, y: fNode.y * scale},
+      {x: tNode.x * scale, y: tNode.y * scale},
+      ()=>{
+        finishCount++;
+        if(finishCount === newSpreads.length){
+          drawGroupNetwork(ctx, groupNodes);
+          callback();
+        }
+      }
+    );
+  });
+}
+
+/* ============ 连线动画(慢速) ============ */
+function animateLine(ctx, source, target, onDone){
+  let current = 0;
+  function stepAnim(){
+    if(current > animSteps){
+      onDone();
+      return;
+    }
+    const p = current / animSteps;
+    const cx = source.x + (target.x - source.x) * p;
+    const cy = source.y + (target.y - source.y) * p;
+
+    ctx.strokeStyle = '#ff0000';
+    ctx.beginPath();
+    ctx.moveTo(source.x, source.y);
+    ctx.lineTo(cx, cy);
+    ctx.stroke();
+
+    current++;
+    setMyFrame(stepAnim);
+  }
+  stepAnim();
+}
+
+/* ============ 洗牌函数 ============ */
+function shuffleArray(arr){
+  for(let i = arr.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+</script>
+</body>
+</html>
